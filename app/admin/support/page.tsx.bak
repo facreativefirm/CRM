@@ -1,0 +1,508 @@
+```
+"use client";
+
+import React, { useState, useEffect } from "react";
+import { AuthGuard } from "@/components/auth/AuthGuard";
+import { Sidebar } from "@/components/layout/Sidebar";
+import { Navbar } from "@/components/layout/Navbar";
+import { useLanguage } from "@/components/language-provider";
+import { DataTable } from "@/components/shared/DataTable";
+import { Badge } from "@/components/shared/Badge";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { LifeBuoy, AlertTriangle, CheckCircle, Clock, Loader2, Search, Plus, Trash2, Mail, Settings, LayoutGrid, FileText } from "lucide-react";
+import api from "@/lib/api";
+import Link from "next/link";
+import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
+import { useSearchParams, useRouter } from "next/navigation";
+import { toast } from "sonner";
+import {
+    Sheet,
+    SheetContent,
+    SheetDescription,
+    SheetHeader,
+    SheetTitle,
+} from "@/components/ui/sheet";
+import { DepartmentForm } from "@/components/admin/support/DepartmentForm";
+import { PredefinedReplyForm } from "@/components/admin/support/PredefinedReplyForm";
+import { Skeleton } from "@/components/shared/Skeleton";
+import { EmptyState } from "@/components/shared/EmptyState";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+
+export default function AdminSupportPage() {
+    const { t } = useLanguage();
+    const searchParams = useSearchParams();
+    const router = useRouter();
+    const activeTab = searchParams.get("tab") || "tickets";
+
+    const [tickets, setTickets] = useState<any[]>([]);
+    const [departments, setDepartments] = useState<any[]>([]);
+    const [replies, setReplies] = useState<any[]>([]);
+    const [loading, setLoading] = useState(true);
+    const [stats, setStats] = useState({ awaiting: 0, open: 0, onHold: 0, closed: 0 });
+    const [searchTerm, setSearchTerm] = useState("");
+    const [statusFilter, setStatusFilter] = useState("all");
+
+    const [deptSheetOpen, setDeptSheetOpen] = useState(false);
+    const [replySheetOpen, setReplySheetOpen] = useState(false);
+    const [editingDept, setEditingDept] = useState<any>(null);
+    const [editingReply, setEditingReply] = useState<any>(null);
+
+    useEffect(() => {
+        fetchData();
+    }, []);
+
+    const fetchData = async () => {
+        try {
+            setLoading(true);
+            const [ticketsRes, departmentsRes, repliesRes] = await Promise.all([
+                api.get("/support/tickets"),
+                api.get("/support/departments"),
+                api.get("/support/predefined-replies")
+            ]);
+
+            const ticketData = ticketsRes.data.data.tickets || [];
+            setTickets(ticketData);
+            setDepartments(departmentsRes.data.data.departments || []);
+            setReplies(repliesRes.data.data.replies || []);
+
+            // Calculate stats
+            setStats({
+                awaiting: ticketData.filter((t: any) => t.status === 'AWAITING_REPLY').length,
+                open: ticketData.filter((t: any) => t.status === 'OPEN').length,
+                onHold: ticketData.filter((t: any) => t.status === 'ON_HOLD').length,
+                closed: ticketData.filter((t: any) => t.status === 'CLOSED').length,
+            });
+        } catch (err) {
+            console.error("Error fetching data:", err);
+            toast.error("Failed to load support data");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleTabChange = (value: string) => {
+        router.push(`/ admin / support ? tab = ${ value } `);
+    };
+
+    const handleDeleteReply = async (id: number) => {
+        if (!window.confirm("Are you sure you want to delete this macro?")) return;
+        try {
+            await api.delete(`/ support / predefined - replies / ${ id } `);
+            toast.success("Macro deleted");
+            fetchData();
+        } catch (err) {
+            toast.error("Failed to delete macro");
+        }
+    };
+
+    const handleDeleteDept = async (id: number) => {
+        if (!window.confirm("Are you sure you want to delete this department?")) return;
+        try {
+            await api.delete(`/ support / departments / ${ id } `);
+            toast.success("Department deleted");
+            fetchData();
+        } catch (err) {
+            toast.error("Failed to delete department");
+        }
+    };
+
+    const ticketColumns = [
+        {
+            header: "Ticket #",
+            accessorKey: "ticketNumber" as any,
+            cell: (item: any) => (
+                <Link href={`/ admin / support / ${ item.id } `} className="font-bold text-primary hover:underline">
+                    {item.ticketNumber}
+                </Link>
+            )
+        },
+        {
+            header: "Client",
+            accessorKey: "client" as any,
+            cell: (item: any) => (
+                <Link href={`/ admin / clients / ${ item.clientId } `} className="hover:text-primary">
+                    <span className="font-bold">{item.client?.user?.firstName} {item.client?.user?.lastName}</span>
+                    <p className="text-xs text-muted-foreground">{item.client?.companyName}</p>
+                </Link>
+            )
+        },
+        {
+            header: "Subject",
+            accessorKey: "subject" as any,
+            cell: (item: any) => (
+                <Link href={`/ admin / support / ${ item.id } `} className="hover:text-primary transition-colors">
+                    <span className="font-semibold block max-w-[300px] truncate">{item.subject}</span>
+                    <span className="text-xs uppercase font-bold text-muted-foreground">{item.department?.name || 'General Support'}</span>
+                </Link>
+            )
+        },
+        {
+            header: "Priority",
+            accessorKey: "priority" as any,
+            cell: (item: any) => (
+                <Badge variant={item.priority === 'HIGH' || item.priority === 'URGENT' ? 'destructive' : 'outline'} className="text-xs font-semibold">
+                    {item.priority}
+                </Badge>
+            )
+        },
+        {
+            header: "Status",
+            accessorKey: "status" as any,
+            cell: (item: any) => (
+                <Badge variant={
+                    item.status === 'OPEN' ? 'success' :
+                        item.status === 'AWAITING_REPLY' ? 'warning' :
+                            item.status === 'ANSWERED' ? 'info' :
+                                item.status === 'CLOSED' ? 'secondary' :
+                                    'default'
+                } className="font-semibold text-xs rounded-md">
+                    {item.status}
+                </Badge>
+            )
+        },
+        {
+            header: "Last Update",
+            accessorKey: "lastReplyDate" as any,
+            cell: (item: any) => {
+                const date = new Date(item.lastReplyDate || item.updatedAt);
+                const now = new Date();
+                const diffHours = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60));
+                if (diffHours < 1) return 'Just now';
+                if (diffHours < 24) return `${ diffHours }h ago`;
+                return `${ Math.floor(diffHours / 24) }d ago`;
+            }
+        },
+        {
+            header: t("actions"),
+            accessorKey: "id" as any,
+            cell: (item: any) => (
+                <Link href={`/ admin / support / ${ item.id } `}>
+                    <Button variant="outline" size="sm" className="text-xs">
+                        {t("reply")}
+                    </Button>
+                </Link>
+            )
+        }
+    ];
+
+    const filteredTickets = tickets.filter(t => {
+        const matchesSearch =
+            t.subject.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            t.ticketNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            `${ t.client?.user?.firstName } ${ t.client?.user?.lastName } `.toLowerCase().includes(searchTerm.toLowerCase());
+
+        const matchesStatus = statusFilter === 'all' || t.status === statusFilter;
+
+        return matchesSearch && matchesStatus;
+    });
+
+    return (
+        <AuthGuard allowedRoles={["ADMIN", "SUPER_ADMIN", "STAFF"]}>
+            <div className="min-h-screen bg-background text-foreground">
+                <Navbar />
+                <Sidebar />
+                <main className="pl-75 pt-20 p-8">
+                    <div className="max-w-7xl mx-auto space-y-8">
+                        {/* Header */}
+                        <div className="flex justify-between items-center">
+                            <div>
+                                <h1 className="text-3xl font-bold">{t("support_center") || "Support Center"}</h1>
+                                <p className="text-muted-foreground">{t("manage_support_tickets") || "Manage and resolve all incoming client inquiries."}</p>
+                            </div>
+                            <Link href="/admin/support/new">
+                                <Button>
+                                    <Plus className="mr-2 h-4 w-4" /> {t("open_new_ticket") || "Open New Ticket"}
+                                </Button>
+                            </Link>
+                        </div>
+
+                        {/* Quick Stats */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {[
+                                { label: 'awaiting_reply', count: stats.awaiting, color: 'text-rose-500', bg: 'bg-rose-500/10', icon: AlertTriangle, status: 'AWAITING_REPLY' },
+                                { label: 'open_tickets', count: stats.open, color: 'text-blue-500', bg: 'bg-blue-500/10', icon: Clock, status: 'OPEN' },
+                                { label: 'answered', count: stats.onHold, color: 'text-emerald-500', bg: 'bg-emerald-500/10', icon: CheckCircle, status: 'ANSWERED' },
+                                { label: 'on_hold', count: stats.onHold, color: 'text-orange-500', bg: 'bg-orange-500/10', icon: LifeBuoy, status: 'ON_HOLD' }
+                            ].map((stat, idx) => (
+                                <Card
+                                    key={idx}
+                                    className="bg-background/50 backdrop-blur-lg border hover:border-primary transition-colors cursor-pointer"
+                                    onClick={() => setStatusFilter(stat.status)}
+                                >
+                                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                                        <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">
+                                            {t(stat.label)}
+                                        </CardTitle>
+                                        <stat.icon className={cn("h-4 w-4", stat.color)} />
+                                    </CardHeader>
+                                    <CardContent>
+                                        <div className="text-2xl font-bold">{stat.count}</div>
+                                    </CardContent>
+                                </Card>
+                            ))}
+                        </div>
+
+                        {/* Controls & List */}
+                        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
+                            <div className="flex flex-col md:flex-row justify-between items-center gap-4 mb-4">
+                                <TabsList className="bg-muted p-1 rounded-md">
+                                    <TabsTrigger value="tickets">{t("ticket_queue")}</TabsTrigger>
+                                    <TabsTrigger value="replies">{t("predefined_replies")}</TabsTrigger>
+                                    <TabsTrigger value="departments">{t("departments")}</TabsTrigger>
+                                    <TabsTrigger value="network">{t("network_issues")}</TabsTrigger>
+                                </TabsList>
+
+                                {activeTab === 'tickets' && (
+                                    <div className="relative w-full md:w-auto">
+                                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            placeholder="Search by ID, Subject or Client..."
+                                            className="pl-9 w-full md:w-[300px] bg-background/50 backdrop-blur-lg border"
+                                            value={searchTerm}
+                                            onChange={(e) => setSearchTerm(e.target.value)}
+                                        />
+                                    </div>
+                                )}
+                            </div>
+
+                            <TabsContent value="tickets" className="space-y-4">
+                                {/* Sub-Tabs for Ticket Status */}
+                                <div className="flex flex-wrap gap-2 mb-4">
+                                    {['all', 'OPEN', 'AWAITING_REPLY', 'ANSWERED', 'ON_HOLD', 'CLOSED'].map((status) => (
+                                        <Button
+                                            key={status}
+                                            variant={statusFilter === status ? "default" : "outline"}
+                                            size="sm"
+                                            className={cn(
+                                                "rounded-md text-xs uppercase",
+                                                statusFilter === status ? "" : "bg-background/50 backdrop-blur-lg border"
+                                            )}
+                                            onClick={() => setStatusFilter(status)}
+                                        >
+                                            {status}
+                                        </Button>
+                                    ))}
+                                </div>
+
+                                <Card className="bg-background/50 backdrop-blur-lg border">
+                                    <CardContent className="p-0">
+                                        {loading ? (
+                                            <div className="flex flex-col items-center justify-center py-12 gap-4">
+                                                <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                                                <p className="text-muted-foreground text-sm">Loading tickets...</p>
+                                            </div>
+                                        ) : filteredTickets.length === 0 ? (
+                                            <EmptyState
+                                                icon={CheckCircle}
+                                                title="No Tickets Found"
+                                                description="No tickets matching your criteria were found."
+                                            />
+                                        ) : (
+                                            <DataTable columns={ticketColumns} data={filteredTickets} />
+                                        )}
+                                    </CardContent>
+                                </Card>
+                            </TabsContent>
+
+                            <TabsContent value="replies">
+                                <Card className="bg-background/50 backdrop-blur-lg border p-6">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <div>
+                                            <CardTitle className="text-xl font-bold">Macro Library</CardTitle>
+                                            <CardDescription>Manage pre-written support responses.</CardDescription>
+                                        </div>
+                                        <Button
+                                            onClick={() => { setEditingReply(null); setReplySheetOpen(true); }}
+                                        >
+                                            <Plus className="mr-2 h-4 w-4" /> Add New Reply
+                                        </Button>
+                                    </div>
+
+                                    {loading ? (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {[1, 2, 3].map(i => <Skeleton key={i} className="h-40 rounded-lg" />)}
+                                        </div>
+                                    ) : replies.length === 0 ? (
+                                        <EmptyState
+                                            icon={FileText}
+                                            title="No Macros Found"
+                                            description="Capture common responses here to accelerate ticket resolution."
+                                            actionLabel="Create First Macro"
+                                            onAction={() => { setEditingReply(null); setReplySheetOpen(true); }}
+                                        />
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                            {replies.map((reply) => (
+                                                <Card key={reply.id} className="bg-secondary/50 border hover:border-primary transition-colors group">
+                                                    <CardHeader className="flex flex-row items-center justify-between pb-2">
+                                                        <CardTitle className="text-lg line-clamp-1">{reply.title}</CardTitle>
+                                                        <Badge variant="secondary" className="text-xs">{reply.category}</Badge>
+                                                    </CardHeader>
+                                                    <CardContent className="space-y-3">
+                                                        <p className="text-sm text-muted-foreground line-clamp-3 min-h-[60px]">
+                                                            {reply.message}
+                                                        </p>
+                                                        <div className="flex justify-between items-center pt-2 border-t">
+                                                            <span className="text-xs text-muted-foreground">
+                                                                Used {reply.usedCount || 0} times
+                                                            </span>
+                                                            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                <Button
+                                                                    variant="outline"
+                                                                    size="sm"
+                                                                    onClick={() => { setEditingReply(reply); setReplySheetOpen(true); }}
+                                                                >
+                                                                    Edit
+                                                                </Button>
+                                                                <Button
+                                                                    variant="destructive"
+                                                                    size="sm"
+                                                                    onClick={() => handleDeleteReply(reply.id)}
+                                                                >
+                                                                    <Trash2 className="h-4 w-4" />
+                                                                </Button>
+                                                            </div>
+                                                        </div>
+                                                    </CardContent>
+                                                </Card>
+                                            ))}
+                                        </div>
+                                    )}
+                                </Card>
+                            </TabsContent>
+
+                            <TabsContent value="departments">
+                                <Card className="bg-background/50 backdrop-blur-lg border p-6">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <div>
+                                            <CardTitle className="text-xl font-bold">Organizational Structure</CardTitle>
+                                            <CardDescription>Define specialized support sectors.</CardDescription>
+                                        </div>
+                                        <Button
+                                            onClick={() => { setEditingDept(null); setDeptSheetOpen(true); }}
+                                        >
+                                            <Plus className="mr-2 h-4 w-4" /> New Department
+                                        </Button>
+                                    </div>
+
+                                    {loading ? (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                            {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-48 rounded-lg" />)}
+                                        </div>
+                                    ) : departments.length === 0 ? (
+                                        <EmptyState
+                                            icon={LayoutGrid}
+                                            title="No Departments Registered"
+                                            description="Organize your support team into specialized sectors."
+                                            actionLabel="Register First Sector"
+                                            onAction={() => { setEditingDept(null); setDeptSheetOpen(true); }}
+                                        />
+                                    ) : (
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                                            {departments.map((dept) => (
+                                                <Card
+                                                    key={dept.id}
+                                                    className="bg-secondary/50 border flex flex-col items-center text-center p-6 space-y-3 hover:border-primary transition-colors group relative"
+                                                >
+                                                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={() => { setEditingDept(dept); setDeptSheetOpen(true); }}
+                                                            className="h-8 w-8"
+                                                        >
+                                                            <Settings className="h-4 w-4" />
+                                                        </Button>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            onClick={() => handleDeleteDept(dept.id)}
+                                                            className="h-8 w-8 text-destructive hover:bg-destructive/10"
+                                                        >
+                                                            <Trash2 className="h-4 w-4" />
+                                                        </Button>
+                                                    </div>
+                                                    <div className="w-16 h-16 rounded-full bg-primary/10 text-primary flex items-center justify-center">
+                                                        <LifeBuoy size={32} />
+                                                    </div>
+                                                    <div>
+                                                        <CardTitle className="text-lg">{dept.name}</CardTitle>
+                                                        <CardDescription className="flex items-center justify-center gap-1 text-xs">
+                                                            <Mail className="h-3 w-3" /> {dept.email}
+                                                        </CardDescription>
+                                                    </div>
+                                                    <Badge variant={dept.autoresponderEnabled ? "success" : "outline"} className="text-xs uppercase">
+                                                        {dept.autoresponderEnabled ? "Auto-Live" : "Manual Flow"}
+                                                    </Badge>
+                                                </Card>
+                                            ))}
+                                        </div>
+                                    )}
+                                </Card>
+                            </TabsContent>
+
+                            <TabsContent value="network">
+                                <Card className="bg-background/50 backdrop-blur-lg border p-8 text-center space-y-6">
+                                    <div className="w-20 h-20 bg-emerald-500/10 text-emerald-500 rounded-full flex items-center justify-center mx-auto animate-pulse">
+                                        <CheckCircle size={40} />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <CardTitle className="text-3xl font-bold text-emerald-500">
+                                            All Systems Operational
+                                        </CardTitle>
+                                        <CardDescription className="text-lg max-w-lg mx-auto">
+                                            No reported incidents or planned maintenance at this time across any of our global nodes.
+                                        </CardDescription>
+                                    </div>
+                                    <Button variant="outline" className="h-12 px-8">
+                                        <AlertTriangle className="mr-2 h-5 w-5" /> Declare Network Incident
+                                    </Button>
+                                </Card>
+                            </TabsContent>
+                        </Tabs>
+                    </div>
+                </main>
+
+                {/* Management Sheets */}
+                <Sheet open={deptSheetOpen} onOpenChange={setDeptSheetOpen}>
+                    <SheetContent side="right" className="sm:max-w-xl p-6">
+                        <SheetHeader className="mb-6">
+                            <SheetTitle className="text-2xl font-bold">
+                                {editingDept ? "Edit Department" : "Create New Department"}
+                            </SheetTitle>
+                            <SheetDescription>
+                                Configure a specialized support group for handling targeted inquiries.
+                            </SheetDescription>
+                        </SheetHeader>
+                        <DepartmentForm
+                            initialData={editingDept}
+                            onSuccess={() => { setDeptSheetOpen(false); fetchData(); }}
+                            onCancel={() => setDeptSheetOpen(false)}
+                        />
+                    </SheetContent>
+                </Sheet>
+
+                <Sheet open={replySheetOpen} onOpenChange={setReplySheetOpen}>
+                    <SheetContent side="right" className="sm:max-w-2xl p-6">
+                        <SheetHeader className="mb-6">
+                            <SheetTitle className="text-2xl font-bold">
+                                {editingReply ? "Edit Predefined Reply" : "Create New Predefined Reply"}
+                            </SheetTitle>
+                            <SheetDescription>
+                                Save a professional response template for lightning-fast ticket resolution.
+                            </SheetDescription>
+                        </SheetHeader>
+                        <PredefinedReplyForm
+                            initialData={editingReply}
+                            onSuccess={() => { setReplySheetOpen(false); fetchData(); }}
+                            onCancel={() => setReplySheetOpen(false)}
+                        />
+                    </SheetContent>
+                </Sheet>
+            </div>
+        </AuthGuard>
+    );
+}
+```
